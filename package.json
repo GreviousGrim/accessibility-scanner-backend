@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "postinstall": "puppeteer install",      
-    "start": "node index.js"
+    "postinstall": "puppeteer install",
+    "start": "puppeteer install && node index.js"
   },
   "keywords": [],
   "author": "",
