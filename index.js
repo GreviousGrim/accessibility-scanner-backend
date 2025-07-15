@@ -1,11 +1,11 @@
-require('dotenv').config(); // <<--- Add this at the top!
+require('dotenv').config();
 
 const express = require('express');
 const cors = require('cors');
 const puppeteer = require('puppeteer');
 const axeCore = require('axe-core');
 const rateLimit = require('express-rate-limit');
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY); // <<--- Use env var here!
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const bodyParser = require('body-parser');
 
 const app = express();
@@ -14,13 +14,12 @@ app.use(cors());
 // In-memory store for paid IPs and expiry times (MVP quick & dirty)
 const paidIPs = {};
 
-// Get IP helper (trusts nginx/proxy if you deploy, otherwise just req.ip)
 function getUserIP(req) {
   return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
 }
 
-// ---- 1. STRIPE WEBHOOK (RAW) ROUTE DEFINED FIRST! ----
-const endpointSecret = 'whsec_xHKzoXgLJg5gc9MRKu3L7W1stLyZhKNi'; // keep this in .env too for best security!
+// ---- 1. STRIPE WEBHOOK ----
+const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
 app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
@@ -30,16 +29,13 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) =>
     console.log('✅ Webhook received! Type:', event.type);
 
     if (event.type === 'checkout.session.completed') {
-      // Here, unlock unlimited scans for the user's IP for 24 hours!
-      // We'll extract the IP from the session metadata (set this below)
       const session = event.data.object;
       const paidIP = session.metadata?.user_ip;
       if (paidIP) {
-        paidIPs[paidIP] = Date.now() + 24 * 60 * 60 * 1000; // 24 hours from now
+        paidIPs[paidIP] = Date.now() + 24 * 60 * 60 * 1000;
         console.log(`🔓 Unlimited scans unlocked for IP ${paidIP} until ${new Date(paidIPs[paidIP])}`);
       }
     }
-
     res.status(200).json({ received: true });
   } catch (err) {
     console.error('❌ Webhook error:', err.message);
@@ -47,17 +43,15 @@ app.post('/webhook', bodyParser.raw({ type: 'application/json' }), (req, res) =>
   }
 });
 
-// ---- 2. JSON MIDDLEWARE FOR THE REST OF YOUR APP ----
 app.use(express.json());
 
 // ---- 3. SCAN ENDPOINT ----
 const scanLimiter = rateLimit({
-  windowMs: 24 * 60 * 60 * 1000, // 24 hours
+  windowMs: 24 * 60 * 60 * 1000,
   max: 1,
   message: { error: 'Free scan limit reached. Please upgrade for unlimited scans.' },
   keyGenerator: (req) => getUserIP(req),
   skip: (req) => {
-    // Skip rate limit if user is paid and within 24h
     const userIP = getUserIP(req);
     const unlockExpiry = paidIPs[userIP];
     return unlockExpiry && unlockExpiry > Date.now();
@@ -107,16 +101,16 @@ app.post('/create-checkout-session', async (req, res) => {
               name: 'Accessibility Scanner — Unlimited Scans (24h Access)',
               description: 'Unlock unlimited accessibility scans for 24 hours.',
             },
-            unit_amount: 799, // £7.99 in pence
+            unit_amount: 799,
           },
           quantity: 1,
         },
       ],
       mode: 'payment',
-      success_url: 'http://localhost:3000/?token={CHECKOUT_SESSION_ID}',
-      cancel_url: 'http://localhost:3000/',
+      success_url: 'https://accessibility-scanner-frontend.vercel.app/?token={CHECKOUT_SESSION_ID}',
+      cancel_url: 'https://accessibility-scanner-frontend.vercel.app/',
       metadata: {
-        user_ip: userIP // Store user's IP with session so webhook knows it!
+        user_ip: userIP
       }
     });
     res.json({ url: session.url });
